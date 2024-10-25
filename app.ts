@@ -1,50 +1,62 @@
 import TelegramBot, { Message } from 'node-telegram-bot-api'
 import { OpenAI } from 'openai'
 import dotenv from 'dotenv'
-import axios from 'axios'
+import { commands, messages } from './botConfig'
 
 dotenv.config()
 
-const openai = new OpenAI({
-	apiKey: process.env.OPENAI_API_KEY!,
-})
-
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN!, { polling: true })
 
-bot.onText(/\/start/, (msg: Message) => {
-	const chatId = msg.chat.id
-	bot.sendMessage(
-		chatId,
-		'Hello! I will help you find recipes with AI help. Write down the ingredients you have.'
-	)
-})
+bot.setMyCommands(commands)
 
-bot.onText(/\/receipt/, (msg: Message) => {
-	const chatId = msg.chat.id
-	bot.sendMessage(chatId, 'Please, write your list of ingredients.')
-
-	bot.once('message', async (ingredientMsg: Message) => {
-		const ingredients = ingredientMsg.text || ''
-		bot.sendMessage(chatId, 'Bot is looking for a recipe...')
-		await getRecipe(chatId, ingredients)
-	})
-})
-
-async function getRecipe(chatId: number, ingredients: string): Promise<void> {
+async function fetchOpenAIResponse(prompt: string): Promise<string> {
 	try {
-		const prompt = `Find the best recipe I can cook with the following ingredients: ${ingredients}. Describe it in detail.`
-
 		const response = await openai.chat.completions.create({
 			model: 'gpt-3.5-turbo',
 			messages: [{ role: 'system', content: prompt }],
 		})
-
-		const recipe = response.choices[0]?.message?.content || 'Recipe not found'
-		bot.sendMessage(chatId, recipe)
-	} catch (error: any) {
-		console.error(error)
-		bot.sendMessage(chatId, 'Error: ' + error.message)
+		return response.choices[0]?.message?.content || 'No response found.'
+	} catch (error) {
+		console.error('OpenAI Error:', error)
+		throw new Error(messages.error)
 	}
+}
+
+bot.onText(/\/start/, (msg: Message) => {
+	bot.sendMessage(msg.chat.id, messages.start)
+})
+
+bot.onText(/\/receipt/, (msg: Message) => {
+	bot.sendMessage(msg.chat.id, messages.receiptPrompt)
+
+	bot.once('message', async (ingredientMsg: Message) => {
+		const ingredients = ingredientMsg.text || ''
+		bot.sendMessage(msg.chat.id, messages.lookingForRecipe)
+		await sendRecipe(msg.chat.id, ingredients)
+	})
+})
+
+bot.onText(/\/ideas/, (msg: Message) => {
+	bot.sendMessage(msg.chat.id, messages.ideasPrompt)
+
+	bot.once('message', async (categoryMsg: Message) => {
+		const category = categoryMsg.text || ''
+		bot.sendMessage(msg.chat.id, messages.generatingIdeas)
+		await sendIdeas(msg.chat.id, category)
+	})
+})
+
+async function sendRecipe(chatId: number, ingredients: string): Promise<void> {
+	const prompt = `Find the best recipe I can cook with the following ingredients: ${ingredients}. Describe it in detail.`
+	const response = await fetchOpenAIResponse(prompt)
+	bot.sendMessage(chatId, response)
+}
+
+async function sendIdeas(chatId: number, category: string): Promise<void> {
+	const prompt = `I need ideas for a ${category} recipe. Describe the ingredients and steps.`
+	const response = await fetchOpenAIResponse(prompt)
+	bot.sendMessage(chatId, response)
 }
 
 bot.on('polling_error', console.error)
